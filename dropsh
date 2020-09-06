@@ -106,7 +106,7 @@ module TabCompletion
     # we need the whole line buffer here to see position
     cmdline = Readline.line_buffer
     cmd, *argv = Shellwords.shellsplit(Readline.line_buffer)
-    if argv.any? || (cmdline =~ /#{Regexp.escape(cmd)}\s/)
+    if argv.any? || (cmd && cmdline =~ /#{Regexp.escape(cmd)}\s/)
       complete_path(dirtree, cwd, argv.last.to_s, cmd == 'cd')
     else
       options(cmd.to_s, shell_commands)
@@ -184,7 +184,7 @@ class Shell
   def run
     while cmdline = readline
       cmd, *argv = Shellwords.shellsplit(cmdline)
-      if cmd == nil
+      if cmd == nil || cmd[0] == '#'
         # noop
       elsif cmd == 'exit'
         stderr 'Use Ctrl-D to exit (safety first!)'
@@ -320,10 +320,33 @@ class Shell
   end
 
   #### "GET AND RUN" COMMANDS"
-  # TODO: exec (parallel style, run any shell command on file)
-  # exec eog {foo.jpg}
-  # exec foo.jpg eog {}
-  # exec eog {} ::: a.jpg b.jpg c.jpg
+  def cmd_exec(argv)
+    silent, argv = true, argv[1..-1] if argv.first == '--silent'
+
+    if sep_index = argv.index(':::')
+      cmd = argv[0..sep_index-1]
+      files = argv[(sep_index+1)..-1]
+    end
+
+    unless sep_index && cmd.any? && files.any?
+      stderr("Usage: exec [--silent] local_command [...] [{}] ::: <remote_filename> ...")
+      stderr("Example: 'exec file ::: hi.txt', 'exec echo =={{}}== && cat {} ::: 1.txt 2.txt'")
+      return 
+    end
+
+    cmd << '{}' unless cmd.any?{|arg| arg.include?('{}')}
+    files.each do |path|
+      Dir.mktmpdir do |dir|
+        local_path = File.join(dir, File.basename(path))
+        cmd_get([path, local_path], silent: silent)
+        cmd_replaced = cmd.map do |arg|
+          arg.gsub('{{}}', Shellwords.escape(path)).gsub('{}', Shellwords.escape(local_path))
+        end
+
+        system cmd_replaced.join(' ')
+      end
+    end
+  end
 
   def cmd_grep(argv)
     # TODO: multiple filenames / globs ...
