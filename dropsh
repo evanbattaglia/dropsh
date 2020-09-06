@@ -7,6 +7,7 @@ require 'tempfile'
 
 class String
   def red;            "\e[31m#{self}\e[0m" end
+  def green;          "\e[32m#{self}\e[0m" end
   def blue;           "\e[34m#{self}\e[0m" end
   def bold;           "\e[1m#{self}\e[22m" end
 end
@@ -84,10 +85,12 @@ class DirTree
   end
 
   def is_dir?(path)
+    return true if path == '/'
     listing(File.dirname(path)).is_dir?(File.basename(path))
   end
 
   def exists?(path)
+    return true if path == '/'
     listing(File.dirname(path)).exists?(File.basename(path))
   end
 end
@@ -165,7 +168,8 @@ class Shell
   end
 
   def readline
-    prompt = "#{'dropbox'.red.bold}:#{cwd.blue.bold}$ "
+    local_cwd = Dir.pwd.gsub(/^#{Regexp.escape Dir.home}/, '~').gsub(%r{/+$}, '')
+    prompt = "#{local_cwd.green}:#{'dropbox'.red.bold}:#{cwd.blue.bold}$ "
     Readline.readline(prompt, true)
   rescue Interrupt
     puts
@@ -204,20 +208,61 @@ class Shell
       stderr "cd: #{path}: Not a directory"
     else
       @old_cwd, @cwd = @cwd, new_path
+      @old_lcwd = Dir.pwd
     end
   end
 
-  def cmd_ls(argv)
+  def cmd_lsfresh(argv)
+    cmd_ls(argv, fresh: true)
+  end
+
+  def cmd_ls(argv, fresh: false)
     # TODO: globs...
     stderr("ls: too many arguments") && return if argv.length > 1 # could support this when needed
     path = argv.length == 0 ? cwd : argv.first
-    puts dirtree.listing(abspath(path))
+    if fresh
+      puts dirtree.fresh_listing(abspath(path))
+    else
+      puts dirtree.listing(abspath(path))
+    end
+  end
+
+  def cmd_rm(argv)
+    rm_rf = argv.delete('-rf')
+    stderr("Usage: rm [file] [-rf]") && return if argv.length != 1 # could support this when needed
+    path = abspath(argv.first)
+    if (!rm_rf) && dirtree.is_dir?(path)
+      stderr("rm: Is a directory (use -rf to force)")
+      return
+    end
+    puts DropboxUploader.command_output(['delete', path])
+    dirtree.clear_listing(abspath(argv.first + '/..'))
+  end
+
+  def cmd_mkdir(argv, fresh: false)
+    stderr("Usage: mkdir [dirname]") && return if argv.length != 1 # could support this when needed
+    puts DropboxUploader.command_output(['mkdir', abspath(argv.first)])
+    dirtree.clear_listing(abspath(argv.first + '/..'))
   end
 
   def cmd_get(argv, silent: false)
     stderr("Usage: get <filename> [local_filename]") && return unless [1,2].include?(argv.length)
     src, dest = argv
     output = DropboxUploader.command_output(['download', abspath(src), dest].compact)
+    puts output unless silent
+  end
+
+  def cmd_put(argv, silent: false)
+    stderr("Usage: put <local_filename> [remote_filename]") && return unless [1,2].include?(argv.length)
+    src, dest = argv
+    dest = "#{cwd}/" unless dest
+    abs_dest = abspath(dest)
+    abs_dest += '/' if dest.end_with?('/') && !abs_dest.end_with?('/')
+
+    output = DropboxUploader.command_output(['upload', src, abs_dest].compact)
+    [dest, dest + '/..'].each do |dir|
+      dirtree.clear_listing(abspath(dir))
+    end
     puts output unless silent
   end
 
@@ -231,6 +276,28 @@ class Shell
     puts output unless silent
   end
 
+  def cmd_lcd(argv)
+    stderr("Usage: lcd [<dir>]") && return unless argv.length <= 1
+    dir = argv.first || ENV['HOME']
+    dir = @old_cwd if dir == '-'
+    old_cwd = Dir.pwd
+    Dir.chdir dir
+    @old_cwd = old_cwd # only set on success
+  rescue Errno::ENOTDIR
+    stderr "lcd: #{dir}: Local file not a directory"
+  rescue Errno::ENOENT
+    stderr "lcd: #{dir}: No such local file or directory"
+  rescue => e
+    stderr "lcd: error: #{e.to_s}"
+  end
+
+  def cmd_lls(argv)
+    system(['ls', *argv].map{|a| Shellwords.shellescape(a)}.join(' '))
+  end
+
+  def cmd_bash(argv)
+    system 'bash'
+  end
 
   #### "GET AND RUN" COMMANDS"
 
