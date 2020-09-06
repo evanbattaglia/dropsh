@@ -84,14 +84,18 @@ class DirTree
     @listings.delete path
   end
 
-  def is_dir?(path)
+  def is_dir?(path, fresh: false)
     return true if path == '/'
-    listing(File.dirname(path)).is_dir?(File.basename(path))
+    dir = File.dirname(path)
+    clear_listing(dir) if fresh
+    listing(dir).is_dir?(File.basename(path))
   end
 
-  def exists?(path)
+  def exists?(path, fresh: false)
     return true if path == '/'
-    listing(File.dirname(path)).exists?(File.basename(path))
+    dir = File.dirname(path)
+    clear_listing(dir) if fresh
+    listing(dir).exists?(File.basename(path))
   end
 end
 
@@ -299,8 +303,23 @@ class Shell
     system 'bash'
   end
 
-  #### "GET AND RUN" COMMANDS"
+  def cmd_vi(argv)
+    # TODO: don't overwrite if file has changed remotely while editing
+    stderr("Usage: vi <filename>") && return unless argv.length == 1
+    path = abspath(argv.first)
+    Tempfile.open("dropsh_vi") do |f|
+      if dirtree.is_dir?(path, fresh: true)
+        stderr "vi: can't open file, is a directory"
+        return
+      elsif dirtree.exists?(path)
+        cmd_get([path, f.path])
+      end
+      system("vi #{Shellwords.shellescape f.path}")
+      cmd_put([f.path, path])
+    end
+  end
 
+  #### "GET AND RUN" COMMANDS"
   # TODO: exec (parallel style, run any shell command on file)
   # exec eog {foo.jpg}
   # exec foo.jpg eog {}
@@ -316,7 +335,7 @@ class Shell
     Tempfile.open("dropsh_#{cmdname}") do |f|
       cmd_get([path, f.path], silent: silent)
       cmd += " %s" unless cmd.include?("%s")
-      system(cmd % f.path)
+      system(cmd % Shellwords.shellescape(f.path))
     end
   end
 
