@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 
+# Requires dropbox_uploader.py in path (run it with no arguments to get setup instructions)
+
 require 'readline'
 require 'shellwords'
 require 'set'
@@ -179,7 +181,7 @@ class Shell
     puts
     ''
   end
-    
+
 
   def run
     while cmdline = readline
@@ -331,7 +333,7 @@ class Shell
     unless sep_index && cmd.any? && files.any?
       stderr("Usage: exec [--silent] local_command [...] [{}] ::: <remote_filename> ...")
       stderr("Example: 'exec file ::: hi.txt', 'exec echo =={{}}== && cat {} ::: 1.txt 2.txt'")
-      return 
+      return
     end
 
     cmd << '{}' unless cmd.any?{|arg| arg.include?('{}')}
